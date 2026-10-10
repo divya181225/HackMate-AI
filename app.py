@@ -853,7 +853,12 @@ if st.button("Predict Category", key="neural_predict_button"):
 # -------- FUZZY DIFFICULTY ANALYZER --------
 st.divider()
 st.subheader("🌫️ Fuzzy Difficulty Analyzer")
-st.write(f"**Selected event:** {selected_event['name']}")
+
+if results:
+    selected_event = next(
+        (item["event"] for item in results),
+        None
+    )
 st.caption(
     "Suggestions use keywords from the available listing text. "
     "They are rule-based estimates, not predictions from a trained AI model."
