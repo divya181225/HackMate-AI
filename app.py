@@ -3,6 +3,7 @@
 import streamlit as st
 import requests
 import re
+from modules.logic_path_advisor import compare_learning_paths
 from modules.search_ranker import rank_search_results
 from modules.fuzzy_analyzer import (
     triangle_membership,
@@ -29,20 +30,20 @@ def fetch_brabble_listings(api_key):
 
 
 def convert_brabble_event(item):
-    """Convert a Brabble listing to HackMate AI's existing event format."""
+    """Convert a Brabble listing while preserving available source details."""
 
     fee_raw = item.get("fee")
     fee_text = str(fee_raw).strip() if fee_raw is not None else ""
-    fee_normalized = fee_text.lower().replace(",", "")
+    fee_normalized = fee_text.lower().replace(",", "").replace("₹", "")
 
     if fee_normalized in {
-        "free", "no fee", "₹0", "rs 0", "rs. 0",
+        "free", "no fee", "rs 0", "rs. 0",
         "inr 0", "0", "0.0", "0.00"
     }:
         fee = 0
     else:
         fee_match = re.fullmatch(
-            r"(?:₹\s*|rs\.?\s*|inr\s*)?"
+            r"(?:rs\.?\s*|inr\s*)?"
             r"(\d+(?:\.\d{1,2})?)"
             r"\s*(?:inr|rs\.?)?",
             fee_normalized,
@@ -55,34 +56,99 @@ def convert_brabble_event(item):
         "OFFLINE": "Offline",
         "HYBRID": "Hybrid",
     }.get(mode, "Unknown")
-    deadline = item.get("deadline")
+
+    def clean_text(value):
+        if isinstance(value, str):
+            return value.strip()
+        if isinstance(value, list):
+            return ", ".join(
+                str(x).strip() for x in value if x
+            )
+        if isinstance(value, dict):
+            return "; ".join(
+                f"{k}: {v}" for k, v in value.items() if v
+            )
+        return ""
+
+    def first_available(*values):
+        for value in values:
+            text = clean_text(value)
+            if text and text.lower() not in {"none", "null", "n/a"}:
+                return text
+        return ""
+
+    description = first_available(
+        item.get("description"),
+        item.get("summary"),
+        item.get("details"),
+        item.get("problemStatement"),
+        item.get("problem_statement"),
+    )
+
+    raw_skills = (
+        item.get("skills")
+        or item.get("technologies")
+        or item.get("techStack")
+        or item.get("tags")
+        or []
+    )
+    skills_text = clean_text(raw_skills)
+    skills = (
+        [s.strip() for s in re.split(r"[,;|]", skills_text) if s.strip()]
+        if skills_text else []
+    )
+
+    eligibility = first_available(item.get("eligibility")) or "Not provided"
+    organizer = first_available(
+        item.get("organiser"), item.get("organizer")
+    ) or "Not provided"
+    platform = first_available(item.get("platform")) or "Not provided"
+    deadline = item.get("deadline") or "Not provided"
+
     description_parts = [
-        f"Organizer: {item.get('organiser') or 'Not provided'}",
-        f"Platform: {item.get('platform') or 'Not provided'}",
-        f"Eligibility: {', '.join(item.get('eligibility') or []) or 'Not provided'}",
-        f"Event details: {item.get('description') or item.get('summary') or 'Not provided'}",
-        f"Deadline: {deadline or 'Not provided'}",
+        f"Organizer: {organizer}",
+        f"Platform: {platform}",
+        f"Eligibility: {eligibility}",
+        f"Event details: {description or 'Not provided'}",
+        f"Deadline: {deadline}",
     ]
+
+    # Preserve any additional source fields that may help the advisor.
+    extra_details = []
+    for key in (
+        "problemStatement", "problem_statement", "requirements",
+        "technologies", "techStack", "prizes", "deliverables",
+        "themes", "tracks", "rules"
+    ):
+        value = clean_text(item.get(key))
+        if value and value not in extra_details:
+            extra_details.append(f"{key}: {value}")
+
+    description_parts.extend(extra_details)
 
     return {
         "name": item.get("title") or "Untitled hackathon",
         "category": item.get("type") or "Hackathon",
-        "skills": [],
+        "skills": skills,
         "fee": fee,
         "fee_text": fee_text or "Not provided",
         "format": event_format,
         "days": None,
         "complexity": None,
-        "prerequisites": None,
-        "deliverables": None,
+        "prerequisites": first_available(
+            item.get("prerequisites"), item.get("requirements")
+        ) or None,
+        "deliverables": first_available(
+            item.get("deliverables"), item.get("submissionRequirements")
+        ) or None,
         "time_pressure": None,
         "description": " · ".join(description_parts),
         "url": item.get("url") or item.get("shareUrl") or "https://brabble.ai/",
-        "platform": item.get("platform") or "Not provided",
+        "platform": platform,
         "deadline": deadline,
         "attribution": item.get("shareUrl") or "https://brabble.ai/",
     }
-
+   
 
 st.set_page_config(
     page_title="HackMate AI",
@@ -608,6 +674,99 @@ if results:
         else:
             st.success(
                 "Your selected skills cover all skills listed for this event."
+            )
+
+    # -------- HACKATHON LEARNING PATH ADVISOR --------
+    st.divider()
+    st.subheader("🧭 Hackathon Learning Path Advisor")
+    st.write(
+        "Compare two hackathons and discover which listed topics "
+        "match your learning goal using logical reasoning."
+    )
+
+    if len(results) >= 2:
+        event_names = list(dict.fromkeys(
+            item["event"]["name"] for item in results
+        ))
+        event_lookup = {
+            item["event"]["name"]: item["event"]
+            for item in results
+        }
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+            event_a_name = st.selectbox(
+                "First hackathon",
+                event_names,
+                key="path_event_a",
+            )
+
+        with col2:
+            event_b_options = [
+                name for name in event_names if name != event_a_name
+            ]
+            event_b_name = st.selectbox(
+                "Second hackathon",
+                event_b_options,
+                key="path_event_b",
+            )
+
+        goal = st.selectbox(
+            "What do you want to learn?",
+            [
+                "Machine Learning",
+                "Data Analysis",
+                "Build websites",
+                "Learn cloud",
+                "Explore AI",
+            ],
+            key="path_learning_goal",
+        )
+
+        
+        if st.button("Compare learning paths", key="run_path_comparison"):
+            comparisons = compare_learning_paths(
+                event_lookup[event_a_name],
+                event_lookup[event_b_name],
+                goal,
+            )
+
+            for comparison in comparisons:
+                st.markdown(f"### {comparison['event_name']}")
+
+                st.caption(
+                    "Evidence: " + comparison["evidence_level"]
+                )
+
+                topics = comparison["topics_found"]
+                st.write(
+                    "**Topics found:** " +
+                    (", ".join(topics) if topics else
+                     "No technical topics identified in available details.")
+                )
+
+                st.write("**What you might learn:**")
+                for outcome in comparison["learning_outcomes"]:
+                    st.write("- " + outcome)
+
+                forward = comparison["forward_chaining"]
+                backward = comparison["backward_chaining"]
+
+                if forward["matched"]:
+                    st.success("Your learning goal matches a listed topic.")
+                else:
+                    st.warning(
+                        "The available text does not confirm a direct match."
+                    )
+
+                st.caption("Forward chaining — " + forward["rule"])
+                st.write("**Backward chaining:** " + backward["explanation"])
+
+            st.info(
+                "These are topic-based learning possibilities, not guaranteed "
+                "outcomes. The current data source may omit full problem "
+                "statements, technologies, and submission requirements."
             )
 
 
