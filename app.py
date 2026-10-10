@@ -370,16 +370,17 @@ def event_matches_interest(event, selected_interests):
 
 results = []
 
+
 for event in HACKATHONS:
     fee = event.get("fee")
 
-    
-# Handle known and unknown participation fees.
-if fee is None:
-    if not include_unknown_fees:
+    # Handle known and unknown participation fees.
+    if fee is None:
+        if not include_unknown_fees:
+            continue
+    elif fee > max_fee:
         continue
-elif fee > max_fee:
-    continue
+
 
 
     if (
