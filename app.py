@@ -3,11 +3,13 @@
 import streamlit as st
 import requests
 import re
+from modules.search_ranker import rank_search_results
 from modules.fuzzy_analyzer import (
     triangle_membership,
     analyze_difficulty,
     suggest_difficulty_factors,
 )
+from modules.search_ranker import rank_search_results
 from datetime import datetime, timezone
 
 
@@ -423,7 +425,6 @@ for event in HACKATHONS:
 
     if search_text and search_text.lower() not in searchable:
         continue
-
     skills = event.get("skills", [])
     matched = set(student_skills).intersection(skills)
 
@@ -461,13 +462,33 @@ for event in HACKATHONS:
         "reasons": reasons
     })
 
-results.sort(
-    key=lambda item: (
-        item["match_score"] is not None,
-        item["match_score"] if item["match_score"] is not None else -1
-    ),
-    reverse=True
-)
+if search_text:
+    ranked_events = rank_search_results(
+        [item["event"] for item in results],
+        search_text,
+    )
+
+    rank_order = {
+        id(event): position
+        for position, event in enumerate(ranked_events)
+    }
+
+    results = [
+        item for item in results
+        if id(item["event"]) in rank_order
+    ]
+
+    results.sort(
+        key=lambda item: rank_order[id(item["event"])]
+    )
+else:
+    results.sort(
+        key=lambda item: (
+            item["match_score"] is not None,
+            item["match_score"] if item["match_score"] is not None else -1
+        ),
+        reverse=True
+    )
 
 if not results:
     st.warning(
