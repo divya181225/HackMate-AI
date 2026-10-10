@@ -1,5 +1,62 @@
 
+
 import streamlit as st
+import requests
+from datetime import datetime, timezone
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def fetch_brabble_listings(api_key):
+    """Fetch and cache current hackathon listings from Brabble."""
+    response = requests.get(
+        "https://brabble.ai/api/listings",
+        headers={"Authorization": f"Bearer {api_key}"},
+        params={"hub": "hackathons", "limit": 200},
+        timeout=20,
+    )
+    response.raise_for_status()
+    data = response.json()
+    return data.get("listings", []), data.get("total", 0), data.get("refreshedAt")
+
+
+def convert_brabble_event(item):
+    """Convert a Brabble listing to HackMate AI's existing event format."""
+    fee_text = str(item.get("fee") or "").strip().lower()
+    fee = 0 if fee_text == "free" else None
+
+    mode = str(item.get("mode") or "").strip().upper()
+    event_format = {
+        "ONLINE": "Online",
+        "OFFLINE": "Offline",
+        "HYBRID": "Hybrid",
+    }.get(mode, "Unknown")
+
+    deadline = item.get("deadline")
+    description_parts = [
+        f"Organizer: {item.get('organiser') or 'Not provided'}",
+        f"Platform: {item.get('platform') or 'Not provided'}",
+        f"Eligibility: {', '.join(item.get('eligibility') or []) or 'Not provided'}",
+        f"Deadline: {deadline or 'Not provided'}",
+    ]
+
+    return {
+        "name": item.get("title") or "Untitled hackathon",
+        "category": item.get("type") or "Hackathon",
+        "skills": [],
+        "fee": fee,
+        "fee_text": item.get("fee") or "Not provided",
+        "format": event_format,
+        "days": None,
+        "complexity": None,
+        "prerequisites": None,
+        "deliverables": None,
+        "time_pressure": None,
+        "description": " · ".join(description_parts),
+        "url": item.get("url") or item.get("shareUrl") or "https://brabble.ai/",
+        "platform": item.get("platform") or "Not provided",
+        "deadline": deadline,
+        "attribution": item.get("shareUrl") or "https://brabble.ai/",
+    }
 
 st.set_page_config(
     page_title="HackMate AI",
@@ -7,66 +64,43 @@ st.set_page_config(
     layout="wide"
 )
 
-# ---------------- SAMPLE HACKATHON DATA ----------------
-# These are demonstration records, NOT verified live events.
-HACKATHONS = [
-    {
-        "name": "AI Innovation Challenge",
-        "category": "AI / ML",
-        "skills": ["Python", "Machine Learning"],
-        "fee": 0,
-        "format": "Online",
-        "days": 3,
-        "complexity": 2,
-        "prerequisites": 2,
-        "deliverables": 2,
-        "time_pressure": 2,
-        "description": "Build a prototype that explores an AI or ML problem.",
-        "url": "https://devpost.com/hackathons"
-    },
-    {
-        "name": "Data Science Sprint",
-        "category": "Data Science",
-        "skills": ["Python", "SQL", "Data Analysis"],
-        "fee": 0,
-        "format": "Online",
-        "days": 2,
-        "complexity": 3,
-        "prerequisites": 3,
-        "deliverables": 3,
-        "time_pressure": 4,
-        "description": "Analyze data and present useful insights.",
-        "url": "https://unstop.com/hackathons"
-    },
-    {
-        "name": "Cloud and AI Buildathon",
-        "category": "Cloud / AI",
-        "skills": ["Python", "Cloud", "APIs"],
-        "fee": 500,
-        "format": "Offline",
-        "days": 2,
-        "complexity": 5,
-        "prerequisites": 5,
-        "deliverables": 4,
-        "time_pressure": 5,
-        "description": "Design a cloud-connected AI solution.",
-        "url": "https://www.mlh.com/"
-    },
-    {
-        "name": "Student App Design Jam",
-        "category": "App Development",
-        "skills": ["UI Design", "Python"],
-        "fee": 0,
-        "format": "Online",
-        "days": 5,
-        "complexity": 1,
-        "prerequisites": 1,
-        "deliverables": 2,
-        "time_pressure": 1,
-        "description": "Turn a student problem into a simple prototype.",
-        "url": "https://devpost.com/hackathons"
-    }
-]
+
+# ---------------- LIVE HACKATHON DATA ----------------
+
+try:
+    api_key = st.secrets["BRABBLE_API_KEY"]
+    raw_listings, total_listings, data_refreshed = fetch_brabble_listings(api_key)
+
+    HACKATHONS = [
+        convert_brabble_event(item)
+        for item in raw_listings
+        if item.get("title") and (item.get("url") or item.get("shareUrl"))
+    ]
+
+    st.caption(
+        f"Data source: Brabble · {len(HACKATHONS)} listings loaded "
+        f"from {total_listings} available · "
+        f"Last source refresh: {data_refreshed or 'Not provided'}"
+    )
+
+except KeyError:
+    HACKATHONS = []
+    st.error(
+        "Brabble API key is not configured. Add BRABBLE_API_KEY "
+        "to .streamlit/secrets.toml."
+    )
+
+except requests.RequestException:
+    HACKATHONS = []
+    st.error(
+        "Could not retrieve hackathons from Brabble. "
+        "Please try again later."
+    )
+
+except (ValueError, TypeError):
+    HACKATHONS = []
+    st.error("Brabble returned data that could not be processed.")
+
 
 # ---------------- FUZZY LOGIC ----------------
 def triangle_membership(value, left, peak, right):
@@ -266,6 +300,11 @@ max_fee = st.sidebar.slider(
     step=100
 )
 
+include_unknown_fees = st.sidebar.checkbox(
+    "Include events with unknown fees",
+    value=True
+)
+
 preferred_format = st.sidebar.selectbox(
     "Preferred format",
     ["Any", "Online", "Offline"]
@@ -286,13 +325,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.info(
-    "DEMO MODE: The listings below are sample records for testing. "
-    "They are not verified upcoming hackathons."
+    "LIVE LISTINGS: Data fetched from Brabble. "
+    "Listings and deadlines may change; confirm eligibility, fees "
+    "and registration details on the organizer's website."
 )
+
 
 # ---------------- DASHBOARD ----------------
 c1, c2, c3 = st.columns(3)
-c1.metric("Sample listings", len(HACKATHONS))
+c1.metric("Live listings loaded", len(HACKATHONS))
 c2.metric("Selected skills", len(student_skills))
 c3.metric("Selected interests", len(interests))
 
@@ -304,32 +345,84 @@ search_text = st.text_input(
     placeholder="Try Python, AI, data science..."
 )
 
+def event_matches_interest(event, selected_interests):
+    if not selected_interests:
+        return True
+
+    text = (
+        event.get("name", "") + " "
+        + event.get("category", "") + " "
+        + event.get("description", "")
+    ).lower()
+
+    keywords = {
+        "AI / ML": ["ai", "artificial intelligence", "machine learning", "ml", "deep learning"],
+        "Data Science": ["data science", "data analysis", "analytics", "data"],
+        "Cloud / AI": ["cloud", "api", "infrastructure", "devops"],
+        "App Development": ["app development", "application", "mobile app", "ui design", "web development"]
+    }
+
+    return any(
+        keyword in text
+        for interest in selected_interests
+        for keyword in keywords.get(interest, [interest.lower()])
+    )
+
 results = []
 
 for event in HACKATHONS:
-    if event["fee"] > max_fee:
+    fee = event.get("fee")
+
+    
+# Handle known and unknown participation fees.
+if fee is None:
+    if not include_unknown_fees:
+        continue
+elif fee > max_fee:
+    continue
+
+
+    if (
+        preferred_format != "Any"
+        and event.get("format") != preferred_format
+    ):
         continue
 
-    if preferred_format != "Any" and event["format"] != preferred_format:
-        continue
-
-    if interests and event["category"] not in interests:
+    if not event_matches_interest(event, interests):
         continue
 
     searchable = (
-        event["name"] + " " + event["category"] + " "
-        + " ".join(event["skills"]) + " " + event["description"]
+        event.get("name", "") + " "
+        + event.get("category", "") + " "
+        + " ".join(event.get("skills", [])) + " "
+        + event.get("description", "")
     ).lower()
 
     if search_text and search_text.lower() not in searchable:
         continue
 
-    matched = set(student_skills).intersection(event["skills"])
-    match_score = round(
-        100 * len(matched) / max(len(event["skills"]), 1)
+    skills = event.get("skills", [])
+    matched = set(student_skills).intersection(skills)
+
+    # Do not calculate a skill-match percentage when the source
+    # does not provide required skills.
+    match_score = (
+        round(100 * len(matched) / len(skills))
+        if skills else None
     )
 
-    score, level, reasons = analyze_difficulty(event)
+    factors = [
+        event.get("complexity"),
+        event.get("prerequisites"),
+        event.get("deliverables"),
+        event.get("time_pressure")
+    ]
+
+    if all(isinstance(value, (int, float)) for value in factors):
+        score, level, reasons = analyze_difficulty(event)
+    else:
+        score, level = None, "Not yet assessed"
+        reasons = ["Difficulty factors not provided by the source"]
 
     results.append({
         "event": event,
@@ -340,12 +433,18 @@ for event in HACKATHONS:
         "reasons": reasons
     })
 
-results.sort(key=lambda item: item["match_score"], reverse=True)
+results.sort(
+    key=lambda item: (
+        item["match_score"] is not None,
+        item["match_score"] if item["match_score"] is not None else -1
+    ),
+    reverse=True
+)
 
 if not results:
     st.warning(
-        "No sample listings match your filters. "
-        "Try changing your interests, budget or search."
+        "No live listings match your current filters. "
+        "Try changing your interests, budget, format or search."
     )
 
 for item in results:
@@ -356,27 +455,76 @@ for item in results:
 
         with left:
             st.subheader(event["name"])
-            st.write(event["description"])
-            st.caption(
-                f"{event['category']} · {event['format']} · "
-                f"{event['days']} days · Fee: ₹{event['fee']}"
+            st.write(event.get("description") or "No additional description provided.")
+
+            fee_label = (
+                f"₹{fee}"
+                if (fee := event.get("fee")) is not None
+                else event.get("fee_text", "Fee not confirmed")
             )
-            st.write("**Required skills:** " + ", ".join(event["skills"]))
+
+            st.caption(
+                f"{event.get('category', 'Hackathon')} · "
+                f"{event.get('format', 'Format not provided')} · "
+                f"Fee: {fee_label}"
+            )
+
             st.write(
-                "**Your matching skills:** "
+                "**Required skills:** "
                 + (
-                    ", ".join(sorted(item["matched"]))
-                    if item["matched"]
-                    else "No matching skills selected"
+                    ", ".join(event["skills"])
+                    if event.get("skills")
+                    else "Not provided by the source"
                 )
             )
+
+            if item["match_score"] is None:
+                st.write("**Your matching skills:** Cannot assess — required skills are unavailable.")
+            else:
+                st.write(
+                    "**Your matching skills:** "
+                    + (
+                        ", ".join(sorted(item["matched"]))
+                        if item["matched"]
+                        else "No matching skills selected"
+                    )
+                )
+
             st.write("**Difficulty factors:** " + "; ".join(item["reasons"]))
 
+            if event.get("deadline"):
+                st.caption(f"Deadline: {event['deadline']}")
+
+            if event.get("platform"):
+                st.caption(f"Platform: {event['platform']}")
+
         with right:
-            st.metric("Skill match", f"{item['match_score']}%")
+            if item["match_score"] is not None:
+                st.metric("Skill match", f"{item['match_score']}%")
+            else:
+                st.metric("Skill match", "Not assessed")
+
             st.metric("Estimated difficulty", item["difficulty"])
-            st.caption(f"Factor score: {item['score']:.1f}/5")
-            st.link_button("Explore listings", event["url"])
+
+            if item["score"] is not None:
+                st.caption(f"Factor score: {item['score']:.1f}/5")
+
+            st.link_button(
+                "View event",
+                event["url"]
+            )
+
+        st.caption(
+            "Listing source: Brabble · "
+            "Confirm event details and eligibility on the organizer's page."
+        )
+
+        if event.get("attribution"):
+            st.markdown(
+                f"[View source listing]({event['attribution']})"
+            )
+
+
 
 # ---------------- SKILL-GAP ADVISOR ----------------
 st.divider()
@@ -393,21 +541,30 @@ if results:
         if item["event"]["name"] == chosen_name
     )
 
-    missing = sorted(
-        set(chosen["event"]["skills"]) - set(student_skills)
-    )
+    event_skills = chosen["event"].get("skills", [])
 
-    if missing:
-        st.write("Skills you could learn before participating:")
-        for skill in missing:
-            st.write(f"- **{skill}**")
-    else:
-        st.success(
-            "Your selected skills cover all skills listed for this demo event."
+    if not event_skills:
+        st.info(
+            "Required skills are not provided by the listing source. "
+            "Open the event page to check its requirements."
         )
+    else:
+        missing = sorted(
+            set(event_skills) - set(student_skills)
+        )
+
+        if missing:
+            st.write("Skills you could learn before participating:")
+            for skill in missing:
+                st.write(f"- **{skill}**")
+        else:
+            st.success(
+                "Your selected skills cover all skills listed for this event."
+            )
 
 st.divider()
 st.caption(
     "HackMate AI · Student project prototype. "
-    "Scores are guidance only, not guarantees."
+    "Listings provided by Brabble; confirm details with the organizer. "
+    "Difficulty scores are guidance only, not guarantees."
 )
