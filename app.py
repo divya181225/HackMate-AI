@@ -2,6 +2,7 @@
 
 import streamlit as st
 import requests
+import re
 from datetime import datetime, timezone
 
 
@@ -19,10 +20,27 @@ def fetch_brabble_listings(api_key):
     return data.get("listings", []), data.get("total", 0), data.get("refreshedAt")
 
 
+
 def convert_brabble_event(item):
     """Convert a Brabble listing to HackMate AI's existing event format."""
-    fee_text = str(item.get("fee") or "").strip().lower()
-    fee = 0 if fee_text == "free" else None
+
+    fee_raw = item.get("fee")
+    fee_text = str(fee_raw).strip() if fee_raw is not None else ""
+    fee_normalized = fee_text.lower().replace(",", "")
+
+    if fee_normalized in {
+        "free", "no fee", "₹0", "rs 0", "rs. 0",
+        "inr 0", "0", "0.0", "0.00"
+    }:
+        fee = 0
+    else:
+        fee_match = re.fullmatch(
+            r"(?:₹\s*|rs\.?\s*|inr\s*)?"
+            r"(\d+(?:\.\d{1,2})?)"
+            r"\s*(?:inr|rs\.?)?",
+            fee_normalized,
+        )
+        fee = float(fee_match.group(1)) if fee_match else None
 
     mode = str(item.get("mode") or "").strip().upper()
     event_format = {
@@ -44,7 +62,7 @@ def convert_brabble_event(item):
         "category": item.get("type") or "Hackathon",
         "skills": [],
         "fee": fee,
-        "fee_text": item.get("fee") or "Not provided",
+        "fee_text": fee_text or "Not provided",
         "format": event_format,
         "days": None,
         "complexity": None,
@@ -57,6 +75,7 @@ def convert_brabble_event(item):
         "deadline": deadline,
         "attribution": item.get("shareUrl") or "https://brabble.ai/",
     }
+
 
 st.set_page_config(
     page_title="HackMate AI",
@@ -292,18 +311,17 @@ interests = st.sidebar.multiselect(
     default=["AI / ML"]
 )
 
-max_fee = st.sidebar.slider(
-    "Maximum participation fee (₹)",
-    min_value=0,
-    max_value=2000,
-    value=500,
-    step=100
+
+
+fee_filter = st.sidebar.selectbox(
+    "Participation fee",
+    ["Any", "Free", "Paid"],
+    index=0,
 )
 
-include_unknown_fees = st.sidebar.checkbox(
-    "Include events with unknown fees",
-    value=True
-)
+
+
+
 
 preferred_format = st.sidebar.selectbox(
     "Preferred format",
@@ -368,18 +386,71 @@ def event_matches_interest(event, selected_interests):
         for keyword in keywords.get(interest, [interest.lower()])
     )
 
+def estimate_experience_level(event):
+    """Estimate experience level from available listing text."""
+    text = " ".join([
+        str(event.get("name") or ""),
+        str(event.get("category") or ""),
+        str(event.get("description") or ""),
+        str(event.get("fee_text") or ""),
+    ]).lower()
+
+    advanced_keywords = [
+        "advanced", "expert", "professional",
+        "senior-level", "complex challenge"
+    ]
+    beginner_keywords = [
+        "beginner", "beginners", "introductory",
+        "no experience", "novice", "school students"
+    ]
+
+    if any(word in text for word in advanced_keywords):
+        return "Advanced"
+
+    if any(word in text for word in beginner_keywords):
+        return "Beginner"
+
+    # The source does not provide enough information.
+    return "Intermediate"
+
+
 results = []
 
 
 for event in HACKATHONS:
     fee = event.get("fee")
 
-    # Handle known and unknown participation fees.
-    if fee is None:
-        if not include_unknown_fees:
-            continue
-    elif fee > max_fee:
+    
+    
+    
+    # Filter hackathons using the source's fee label.
+    fee_text = str(event.get("fee_text") or "").strip().lower()
+    fee_value = event.get("fee")
+
+    is_free = (
+        fee_text in {"free", "no fee"}
+        or fee_value == 0
+    )
+
+    is_paid = (
+        "paid" in fee_text
+        or (
+            isinstance(fee_value, (int, float))
+            and not isinstance(fee_value, bool)
+            and fee_value > 0
+        )
+    )
+
+    if fee_filter == "Free" and not is_free:
         continue
+    elif fee_filter == "Paid" and not is_paid:
+        continue
+    
+    estimated_level = estimate_experience_level(event)
+
+    if experience != estimated_level:
+        continue
+
 
 
 
@@ -562,6 +633,8 @@ if results:
             st.success(
                 "Your selected skills cover all skills listed for this event."
             )
+
+
 
 st.divider()
 st.caption(
