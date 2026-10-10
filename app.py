@@ -3,6 +3,7 @@
 import streamlit as st
 import requests
 import re
+from modules.neural_predictor import classify_problem
 from modules.logic_path_advisor import compare_learning_paths
 from modules.search_ranker import rank_search_results
 from modules.fuzzy_analyzer import (
@@ -769,144 +770,177 @@ if results:
                 "statements, technologies, and submission requirements."
             )
 
+# -------- NEURAL NETWORK PROBLEM CLASSIFIER --------
 
-    # -------- FUZZY DIFFICULTY ANALYZER --------
-    st.divider()
-    st.subheader("🌫️ Fuzzy Difficulty Analyzer")
-    st.write(f"**Selected event:** {selected_event['name']}")
-    st.caption(
-        "Suggestions use keywords from the available listing text. "
-        "They are rule-based estimates, not predictions from a trained AI model."
-    )
+st.divider()
+st.subheader("🧠 Neural Network Problem Classifier")
+st.write(
+    "Paste a hackathon problem statement to predict its technical category."
+)
 
-    suggestions = suggest_difficulty_factors(selected_event)
+problem_text = st.text_area(
+    "Hackathon problem statement",
+    placeholder="Example: Build a system that detects diseases from medical images...",
+    key="neural_problem_input",
+)
 
-    factor_labels = {
-        "complexity": "Technical complexity",
-        "prerequisites": "Prerequisites required",
-        "deliverables": "Expected deliverables",
-        "time_pressure": "Time pressure",
-    }
+if st.button("Predict Category", key="neural_predict_button"):
+    if len(problem_text.strip()) < 10:
+        st.warning("Please enter a longer problem statement.")
+    else:
+        prediction = classify_problem(problem_text)
+        st.success("Predicted category: " + prediction["category"])
 
-    st.write("**Automatic suggestions and evidence**")
+        if prediction["matched_words"]:
+            st.write(
+                "**Recognized words:** "
+                + ", ".join(prediction["matched_words"])
+            )
 
-    chosen_values = {}
-    for key, label in factor_labels.items():
-        value, evidence = suggestions[key]
-        chosen_values[key] = value
-
-        if value is None:
-            st.warning(f"**{label}:** Unknown — {evidence}")
-        else:
-            st.write(f"**{label}:** {value}/5 — {evidence}")
-
-    st.caption(
-        "Scale: 1 = lower difficulty; 5 = higher difficulty. "
-        "Verify details using the event organizer's page."
-    )
-
-    with st.form("confirm_fuzzy_factors"):
-        st.write("**Review and confirm factor ratings**")
         st.caption(
-            "Review unknown factors using the organizer's information. "
-            "The app will not calculate a final result until you confirm "
-            "that you reviewed each unknown factor."
+            "Educational prototype: predictions depend on its small "
+            "training examples and may be incorrect."
         )
 
-        factor_inputs = {}
-        factor_confirmations = {}
 
-        for key, label in factor_labels.items():
-            suggested_value = chosen_values[key]
 
-            if suggested_value is None:
-                st.warning(
-                    f"{label}: No reliable automatic suggestion was found."
-                )
-                factor_confirmations[key] = st.checkbox(
-                    f"I reviewed the event details for {label.lower()}",
-                    key=f"confirm_{key}",
-                )
-                default_rating = 3
-            else:
-                default_rating = suggested_value
+# -------- FUZZY DIFFICULTY ANALYZER --------
+st.divider()
+st.subheader("🌫️ Fuzzy Difficulty Analyzer")
+st.write(f"**Selected event:** {selected_event['name']}")
+st.caption(
+    "Suggestions use keywords from the available listing text. "
+    "They are rule-based estimates, not predictions from a trained AI model."
+)
 
-            factor_inputs[key] = st.select_slider(
-                label,
-                options=[1, 2, 3, 4, 5],
-                value=default_rating,
-                key=f"rating_{key}",
-                help=(
-                    "No reliable suggestion found. Review event details and "
-                    "choose a rating."
-                    if suggested_value is None
-                    else "Automatic suggestion; review or adjust as needed."
-                ),
+suggestions = suggest_difficulty_factors(selected_event)
+
+factor_labels = {
+    "complexity": "Technical complexity",
+    "prerequisites": "Prerequisites required",
+    "deliverables": "Expected deliverables",
+    "time_pressure": "Time pressure",
+}
+
+st.write("**Automatic suggestions and evidence**")
+
+chosen_values = {}
+for key, label in factor_labels.items():
+    value, evidence = suggestions[key]
+    chosen_values[key] = value
+
+    if value is None:
+        st.warning(f"**{label}:** Unknown — {evidence}")
+    else:
+        st.write(f"**{label}:** {value}/5 — {evidence}")
+
+st.caption(
+    "Scale: 1 = lower difficulty; 5 = higher difficulty. "
+    "Verify details using the event organizer's page."
+)
+
+with st.form("confirm_fuzzy_factors"):
+    st.write("**Review and confirm factor ratings**")
+    st.caption(
+        "Review unknown factors using the organizer's information. "
+        "The app will not calculate a final result until you confirm "
+        "that you reviewed each unknown factor."
+    )
+
+    factor_inputs = {}
+    factor_confirmations = {}
+
+    for key, label in factor_labels.items():
+        suggested_value = chosen_values[key]
+
+        if suggested_value is None:
+            st.warning(
+                f"{label}: No reliable automatic suggestion was found."
             )
+            factor_confirmations[key] = st.checkbox(
+                f"I reviewed the event details for {label.lower()}",
+                key=f"confirm_{key}",
+            )
+            default_rating = 3
+        else:
+            default_rating = suggested_value
 
-        confirmed = st.form_submit_button(
-            "Calculate Fuzzy Difficulty",
-            use_container_width=True,
+        factor_inputs[key] = st.select_slider(
+            label,
+            options=[1, 2, 3, 4, 5],
+            value=default_rating,
+            key=f"rating_{key}",
+            help=(
+                "No reliable suggestion found. Review event details and "
+                "choose a rating."
+                if suggested_value is None
+                else "Automatic suggestion; review or adjust as needed."
+            ),
         )
 
-    if confirmed:
-        unconfirmed = [
-            factor_labels[key]
-            for key in factor_labels
-            if chosen_values[key] is None
-            and not factor_confirmations.get(key, False)
-        ]
+    confirmed = st.form_submit_button(
+        "Calculate Fuzzy Difficulty",
+        use_container_width=True,
+    )
 
-        if unconfirmed:
-            st.error(
-                "Review and confirm these unknown factors first: "
-                + ", ".join(unconfirmed)
+if confirmed:
+    unconfirmed = [
+        factor_labels[key]
+        for key in factor_labels
+        if chosen_values[key] is None
+        and not factor_confirmations.get(key, False)
+    ]
+
+    if unconfirmed:
+        st.error(
+            "Review and confirm these unknown factors first: "
+            + ", ".join(unconfirmed)
+        )
+    else:
+        assessed_event = dict(selected_event)
+        assessed_event.update(factor_inputs)
+
+        outcome = analyze_difficulty(assessed_event)
+
+        if outcome["score"] is None:
+            st.warning(
+                "A difficulty result could not be calculated. "
+                "Please check that all four ratings are valid."
             )
         else:
-            assessed_event = dict(selected_event)
-            assessed_event.update(factor_inputs)
+            st.success(
+                f"Estimated difficulty: {outcome['level']}"
+            )
+            st.metric(
+                "Average factor score",
+                f"{outcome['score']:.2f} / 5",
+            )
 
-            outcome = analyze_difficulty(assessed_event)
+            st.write("**Fuzzy membership values**")
+            st.caption(
+                "These values indicate membership in each fuzzy "
+                "category; they are not probabilities."
+            )
 
-            if outcome["score"] is None:
-                st.warning(
-                    "A difficulty result could not be calculated. "
-                    "Please check that all four ratings are valid."
-                )
-            else:
-                st.success(
-                    f"Estimated difficulty: {outcome['level']}"
-                )
-                st.metric(
-                    "Average factor score",
-                    f"{outcome['score']:.2f} / 5",
-                )
+            for level, membership in outcome["memberships"].items():
+                st.write(f"**{level}:** {membership * 100:.1f}%")
+                st.progress(membership)
 
-                st.write("**Fuzzy membership values**")
-                st.caption(
-                    "These values indicate membership in each fuzzy "
-                    "category; they are not probabilities."
-                )
+            if outcome["reasons"]:
+                st.write("**Reasons**")
+                for reason in outcome["reasons"]:
+                    st.write(f"- {reason}")
 
-                for level, membership in outcome["memberships"].items():
-                    st.write(f"**{level}:** {membership * 100:.1f}%")
-                    st.progress(membership)
-
-                if outcome["reasons"]:
-                    st.write("**Reasons**")
-                    for reason in outcome["reasons"]:
-                        st.write(f"- {reason}")
-
-                st.info(
-                    "This is an estimate based on the displayed factor "
-                    "ratings, not an official difficulty rating from "
-                    "the event organizer."
-                )
+            st.info(
+                "This is an estimate based on the displayed factor "
+                "ratings, not an official difficulty rating from "
+                "the event organizer."
+            )
 
 
 st.divider()
 st.caption(
-    "HackMate AI · Student project prototype. "
-    "Listings provided by Brabble; confirm details with the organizer. "
-    "Difficulty scores are guidance only, not guarantees."
+"HackMate AI · Student project prototype. "
+"Listings provided by Brabble; confirm details with the organizer. "
+"Difficulty scores are guidance only, not guarantees."
 )
