@@ -1,0 +1,16 @@
+
+# Private API credentials
+.streamlit/secrets.toml
+
+# Python cache
+__pycache__/
+*.py[cod]
+modules/__pycache__/
+
+# Local virtual environments
+venv/
+.venv/
+
+# Local environment variables
+.env
+.env.*

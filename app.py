@@ -3,6 +3,11 @@
 import streamlit as st
 import requests
 import re
+from modules.fuzzy_analyzer import (
+    triangle_membership,
+    analyze_difficulty,
+    suggest_difficulty_factors,
+)
 from datetime import datetime, timezone
 
 
@@ -48,12 +53,12 @@ def convert_brabble_event(item):
         "OFFLINE": "Offline",
         "HYBRID": "Hybrid",
     }.get(mode, "Unknown")
-
     deadline = item.get("deadline")
     description_parts = [
         f"Organizer: {item.get('organiser') or 'Not provided'}",
         f"Platform: {item.get('platform') or 'Not provided'}",
         f"Eligibility: {', '.join(item.get('eligibility') or []) or 'Not provided'}",
+        f"Event details: {item.get('description') or item.get('summary') or 'Not provided'}",
         f"Deadline: {deadline or 'Not provided'}",
     ]
 
@@ -119,60 +124,6 @@ except requests.RequestException:
 except (ValueError, TypeError):
     HACKATHONS = []
     st.error("Brabble returned data that could not be processed.")
-
-
-# ---------------- FUZZY LOGIC ----------------
-def triangle_membership(value, left, peak, right):
-    """Calculate triangular fuzzy membership between 0 and 1."""
-    if value < left or value > right:
-        return 0.0
-    if value == peak:
-        return 1.0
-    if value < peak:
-        if peak == left:
-            return 1.0
-        return (value - left) / (peak - left)
-    if right == peak:
-        return 1.0
-    return (right - value) / (right - peak)
-
-
-def analyze_difficulty(event):
-    factors = [
-        event["complexity"],
-        event["prerequisites"],
-        event["deliverables"],
-        event["time_pressure"]
-    ]
-
-    score = sum(factors) / len(factors)
-
-    memberships = {
-        "Beginner": triangle_membership(score, 1, 1, 3),
-        "Moderate": triangle_membership(score, 2, 3.5, 5),
-        "Hard": triangle_membership(score, 3, 5, 5)
-    }
-
-    level = max(memberships, key=memberships.get)
-
-    reasons = []
-    if event["complexity"] >= 4:
-        reasons.append("High technical complexity")
-    elif event["complexity"] <= 2:
-        reasons.append("Lower technical complexity")
-
-    if event["prerequisites"] >= 4:
-        reasons.append("Advanced prerequisites")
-    if event["deliverables"] >= 4:
-        reasons.append("Demanding deliverables")
-    if event["time_pressure"] >= 4:
-        reasons.append("High time pressure")
-    if not reasons:
-        reasons.append("Requirements appear manageable")
-
-    return score, level, reasons
-
-
 
 # ---------------- CUSTOM DESIGN ----------------
 st.markdown("""
@@ -420,9 +371,9 @@ results = []
 for event in HACKATHONS:
     fee = event.get("fee")
 
-    
-    
-    
+
+
+
     # Filter hackathons using the source's fee label.
     fee_text = str(event.get("fee_text") or "").strip().lower()
     fee_value = event.get("fee")
@@ -445,7 +396,7 @@ for event in HACKATHONS:
         continue
     elif fee_filter == "Paid" and not is_paid:
         continue
-    
+
     estimated_level = estimate_experience_level(event)
 
     if experience != estimated_level:
@@ -490,11 +441,16 @@ for event in HACKATHONS:
         event.get("time_pressure")
     ]
 
+
     if all(isinstance(value, (int, float)) for value in factors):
-        score, level, reasons = analyze_difficulty(event)
+        outcome = analyze_difficulty(event)
+        score = outcome["score"]
+        level = outcome["level"]
+        reasons = outcome["reasons"]
     else:
         score, level = None, "Not yet assessed"
         reasons = ["Difficulty factors not provided by the source"]
+
 
     results.append({
         "event": event,
@@ -612,8 +568,9 @@ if results:
         item for item in results
         if item["event"]["name"] == chosen_name
     )
+    selected_event = chosen["event"]
 
-    event_skills = chosen["event"].get("skills", [])
+    event_skills = selected_event.get("skills", [])
 
     if not event_skills:
         st.info(
@@ -621,9 +578,7 @@ if results:
             "Open the event page to check its requirements."
         )
     else:
-        missing = sorted(
-            set(event_skills) - set(student_skills)
-        )
+        missing = sorted(set(event_skills) - set(student_skills))
 
         if missing:
             st.write("Skills you could learn before participating:")
@@ -634,6 +589,139 @@ if results:
                 "Your selected skills cover all skills listed for this event."
             )
 
+
+    # -------- FUZZY DIFFICULTY ANALYZER --------
+    st.divider()
+    st.subheader("🌫️ Fuzzy Difficulty Analyzer")
+    st.write(f"**Selected event:** {selected_event['name']}")
+    st.caption(
+        "Suggestions use keywords from the available listing text. "
+        "They are rule-based estimates, not predictions from a trained AI model."
+    )
+
+    suggestions = suggest_difficulty_factors(selected_event)
+
+    factor_labels = {
+        "complexity": "Technical complexity",
+        "prerequisites": "Prerequisites required",
+        "deliverables": "Expected deliverables",
+        "time_pressure": "Time pressure",
+    }
+
+    st.write("**Automatic suggestions and evidence**")
+
+    chosen_values = {}
+    for key, label in factor_labels.items():
+        value, evidence = suggestions[key]
+        chosen_values[key] = value
+
+        if value is None:
+            st.warning(f"**{label}:** Unknown — {evidence}")
+        else:
+            st.write(f"**{label}:** {value}/5 — {evidence}")
+
+    st.caption(
+        "Scale: 1 = lower difficulty; 5 = higher difficulty. "
+        "Verify details using the event organizer's page."
+    )
+
+    with st.form("confirm_fuzzy_factors"):
+        st.write("**Review and confirm factor ratings**")
+        st.caption(
+            "Review unknown factors using the organizer's information. "
+            "The app will not calculate a final result until you confirm "
+            "that you reviewed each unknown factor."
+        )
+
+        factor_inputs = {}
+        factor_confirmations = {}
+
+        for key, label in factor_labels.items():
+            suggested_value = chosen_values[key]
+
+            if suggested_value is None:
+                st.warning(
+                    f"{label}: No reliable automatic suggestion was found."
+                )
+                factor_confirmations[key] = st.checkbox(
+                    f"I reviewed the event details for {label.lower()}",
+                    key=f"confirm_{key}",
+                )
+                default_rating = 3
+            else:
+                default_rating = suggested_value
+
+            factor_inputs[key] = st.select_slider(
+                label,
+                options=[1, 2, 3, 4, 5],
+                value=default_rating,
+                key=f"rating_{key}",
+                help=(
+                    "No reliable suggestion found. Review event details and "
+                    "choose a rating."
+                    if suggested_value is None
+                    else "Automatic suggestion; review or adjust as needed."
+                ),
+            )
+
+        confirmed = st.form_submit_button(
+            "Calculate Fuzzy Difficulty",
+            use_container_width=True,
+        )
+
+    if confirmed:
+        unconfirmed = [
+            factor_labels[key]
+            for key in factor_labels
+            if chosen_values[key] is None
+            and not factor_confirmations.get(key, False)
+        ]
+
+        if unconfirmed:
+            st.error(
+                "Review and confirm these unknown factors first: "
+                + ", ".join(unconfirmed)
+            )
+        else:
+            assessed_event = dict(selected_event)
+            assessed_event.update(factor_inputs)
+
+            outcome = analyze_difficulty(assessed_event)
+
+            if outcome["score"] is None:
+                st.warning(
+                    "A difficulty result could not be calculated. "
+                    "Please check that all four ratings are valid."
+                )
+            else:
+                st.success(
+                    f"Estimated difficulty: {outcome['level']}"
+                )
+                st.metric(
+                    "Average factor score",
+                    f"{outcome['score']:.2f} / 5",
+                )
+
+                st.write("**Fuzzy membership values**")
+                st.caption(
+                    "These values indicate membership in each fuzzy "
+                    "category; they are not probabilities."
+                )
+
+                for level, membership in outcome["memberships"].items():
+                    st.write(f"**{level}:** {membership * 100:.1f}%")
+                    st.progress(membership)
+
+                if outcome["reasons"]:
+                    st.write("**Reasons**")
+                    for reason in outcome["reasons"]:
+                        st.write(f"- {reason}")
+
+                st.info(
+                    "This is an estimate based on the displayed factor "
+                    "ratings, not an official difficulty rating from "
+                    "the event organizer."
+                )
 
 
 st.divider()
