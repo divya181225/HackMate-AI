@@ -2,7 +2,8 @@
 
 import streamlit as st
 import requests
-import re
+import re 
+from modules.team_matcher import match_team_skills
 from modules.neural_predictor import classify_problem
 from modules.logic_path_advisor import compare_learning_paths
 from modules.search_ranker import rank_search_results
@@ -771,6 +772,51 @@ if results:
             )
 
 # -------- NEURAL NETWORK PROBLEM CLASSIFIER --------
+
+# -------- TEAM SKILL-COMPLEMENT MATCHER --------
+
+st.divider()
+st.subheader("👥 Hackathon Team Skill-Complement Matcher")
+st.write("Find which required skills your team still needs.")
+
+required_text = st.text_input(
+    "Required skills (comma-separated)",
+    placeholder="Python, Machine Learning, UI/UX",
+    key="team_required_skills",
+)
+
+member1_text = st.text_input(
+    "Member 1 skills",
+    placeholder="Python, SQL",
+    key="team_member1_skills",
+)
+
+member2_text = st.text_input(
+    "Member 2 skills",
+    placeholder="Web Development, UI/UX",
+    key="team_member2_skills",
+)
+
+if st.button("Check Team Skills", key="check_team_skills"):
+    required = [s.strip() for s in required_text.split(",") if s.strip()]
+
+    team = {
+        "Member 1": [s.strip() for s in member1_text.split(",") if s.strip()],
+        "Member 2": [s.strip() for s in member2_text.split(",") if s.strip()],
+    }
+
+    if not required:
+        st.warning("Enter the hackathon's required skills.")
+    else:
+        result = match_team_skills(required, team)
+
+        st.write("**Skills already covered:**")
+        st.write(", ".join(result["available_skills"]) or "None")
+
+        st.write("**Skills missing from your team:**")
+        st.write(", ".join(result["missing_skills"]) or "None")
+
+        st.info(result["recommendation"])
 
 st.divider()
 st.subheader("🧠 Neural Network Problem Classifier")
