@@ -120,31 +120,119 @@ def analyze_difficulty(event):
     return score, level, reasons
 
 
+
 # ---------------- CUSTOM DESIGN ----------------
 st.markdown("""
 <style>
 .stApp {
-    background: linear-gradient(135deg, #fbf7ff, #f5edff, #fff5fb);
+    background: linear-gradient(135deg, #f8f5ff, #f0f4ff, #fff7fb);
+    color: #24213a;
 }
+
+[data-testid="stAppViewContainer"] {
+    color: #24213a;
+}
+
+[data-testid="stHeader"] {
+    background: rgba(248, 245, 255, 0.95);
+}
+
+h1, h2, h3, h4 {
+    color: #30204d !important;
+}
+
+.stApp p,
+.stApp label,
+.stApp [data-testid="stMarkdownContainer"],
+.stApp [data-testid="stCaptionContainer"] {
+    color: #352d48;
+}
+
 .hero {
     padding: 32px;
     border-radius: 22px;
-    background: linear-gradient(115deg, #7546a8, #b77be0, #e9a9d4);
-    color: white;
-    margin-bottom: 20px;
+    background: linear-gradient(115deg, #6541a5, #9760c8, #d47db8);
+    color: #ffffff;
+    margin-bottom: 22px;
+    box-shadow: 0 8px 24px rgba(80, 45, 120, 0.16);
 }
+
 .hero h1, .hero p {
-    color: white;
+    color: #ffffff !important;
 }
+
 .event-card {
-    background: white;
+    background: #ffffff;
+    color: #24213a;
     padding: 20px;
-    border: 1px solid #e8d8f5;
+    border: 1px solid #e4d8f4;
     border-radius: 18px;
     margin-bottom: 12px;
 }
+
+.event-card h3,
+.event-card p {
+    color: #30204d !important;
+}
+
+[data-testid="stMetric"] {
+    background: #ffffff;
+    border: 1px solid #e4d8f4;
+    border-radius: 16px;
+    padding: 18px;
+    box-shadow: 0 4px 14px rgba(60, 40, 90, 0.05);
+}
+
+[data-testid="stMetricLabel"] {
+    color: #655477 !important;
+}
+
+[data-testid="stMetricValue"] {
+    color: #56328c !important;
+}
+
+[data-testid="stVerticalBlockBorderWrapper"] {
+    border-color: #e3d6f2 !important;
+    border-radius: 16px !important;
+}
+
+[data-testid="stSidebar"] {
+    background: #f0e9fb;
+}
+
+[data-testid="stSidebar"] h1,
+[data-testid="stSidebar"] h2,
+[data-testid="stSidebar"] h3 {
+    color: #35204f !important;
+}
+
+[data-testid="stSidebar"] p,
+[data-testid="stSidebar"] label,
+[data-testid="stSidebar"] [data-testid="stCaptionContainer"] {
+    color: #413452 !important;
+}
+
+.stTextInput input,
+.stSelectbox div[data-baseweb="select"],
+.stMultiSelect div[data-baseweb="select"] {
+    border-radius: 10px;
+}
+
+.stButton button,
+.stLinkButton a {
+    border-radius: 10px;
+}
+
+[data-testid="stAlert"] {
+    border-radius: 12px;
+}
+
+footer {
+    visibility: hidden;
+}
 </style>
 """, unsafe_allow_html=True)
+
 
 # ---------------- SIDEBAR ----------------
 st.sidebar.title("🎯 HackMate AI")
